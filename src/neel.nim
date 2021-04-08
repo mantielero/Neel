@@ -2,7 +2,7 @@ import macros, jester, os, strutils, ws, ws/jester_extra, osproc, json, threadpo
 export jester, os, strutils, ws, osproc, json, threadpool, asyncdispatch
 
 when defined(webview):
-    include "neeldir/webview"
+    include "neel/webview"
 
 {.warning[InheritFromException]: off.} #for annoying CustomError warning
 type
@@ -10,7 +10,7 @@ type
 
 
 when defined(chrome):
-    include "neeldir/chrome"
+    include "neel/chrome"
 
 
 const PARAMTYPES* = ["string","int","float","bool","OrderedTable[string, JsonNode]", "seq[JsonNode]"]
