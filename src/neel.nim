@@ -1,19 +1,23 @@
-import macros, jester, os, strutils, ws, ws/jester_extra, osproc, options, json, threadpool, browsers, asyncdispatch
-from sequtils import keepItIf
-export jester, os, strutils, ws, osproc, options, json, threadpool, browsers, asyncdispatch
+import macros, jester, os, strutils, ws, ws/jester_extra, osproc, json, threadpool, asyncdispatch
+export jester, os, strutils, ws, osproc, json, threadpool, asyncdispatch
 
+when defined(webview):
+    include "neeldir/webview"
 
 {.warning[InheritFromException]: off.} #for annoying CustomError warning
-
 type
     CustomError* = object of Exception
 
 
-# ------------- TRANSFORMATIONS & TYPE CONVERSION LOGIC ----------------
+when defined(chrome):
+    include "neeldir/chrome"
+
 
 const PARAMTYPES* = ["string","int","float","bool","OrderedTable[string, JsonNode]", "seq[JsonNode]"]
 
+
 var wsVar* {.threadvar.} :WebSocket
+
 
 macro callJs*(funcName: string, params: varargs[untyped]) =
     quote do:
@@ -84,9 +88,9 @@ proc ofStatements*(procedure: NimNode): NimNode =
                 of "float":
                     paramId.add "getFloat"
                 of "seq[JsonNode]":
-                    paramId.add "getElems" #will this cause an issue if the types are different? 4/5/21
+                    paramId.add "getElems"
                 of "OrderedTable[string, JsonNode]":
-                    paramId.add "getFields" #will this cause an issue if the types are different? 4/5/21
+                    paramId.add "getFields"
 
                 procCall.add nnkDotExpr.newTree(
                     nnkBracketExpr.newTree(
@@ -153,77 +157,8 @@ macro exposeProcs*(procs: untyped) = #macro has to be untyped, otherwise callJs(
     
     #echo result.repr #for testing macro expansion
 
-# ----------------------------------------------------------------------
-
-
-
-# ----------------------- BROWSER LOGIC --------------------------------
-
-proc findChromeMac*: string =
-    const defaultPath :string = r"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    const name = "Google Chrome.app"
-
-    try:
-        if fileExists(absolutePath(defaultPath)):
-            result = defaultPath.replace(" ", r"\ ")
-        else: # Recursive search as implemented in the eel project
-            var alternate_dirs = execProcess("mdfind", args = [name], options = {poUsePath}).split("\n")
-            alternate_dirs.keepItIf(it.contains(name))
-        
-            if alternate_dirs != @[]:
-                result = alternate_dirs[0] & "/Contents/MacOS/Google Chrome"
-            else:
-                raise newException(CustomError, "could not find Chrome")
-
-    except:
-        raise newException(CustomError, "could not find Chrome in Applications directory")
-
-proc findChromeWindows*: string =
-    #const defaultPath = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" # for registery
-    const defaultPath = r"\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-    const backupPath = r"\Program Files\Google\Chrome\Application\chrome.exe"
-    if fileExists(absolutePath(defaultPath)):
-        result = defaultPath
-    elif fileExists(absolutePath(backupPath)): #was originally an if 4/5/21 (testing)
-        result = backupPath
-    else: # include registry search in future versions to account for any location
-        raise newException(CustomError, "could not find Chrome in Program Files (x86) directory")
-
-proc findChromeLinux*: string =
-    const chromeNames = ["google-chrome", "chromium-browser", "chromium"]
-    for name in chromeNames:
-        if execCmd("which " & name) == 0:
-            return name
-    raise newException(CustomError, "could not find Chrome in PATH")
-
-proc findPath*: string =
-    when hostOS == "macosx":
-        result = findChromeMac()
-    elif hostOS == "windows":
-        result = findChromeWindows()
-    elif hostOS == "linux":
-        result = findChromeLinux()
-    else:
-        raise newException(CustomError, "unkown OS in findPath() for neel.nim")
-
-proc openChrome*(portNo: int, chromeFlags: seq[string]) =
-    var chromeStuff = " --app=http://localhost:" & portNo.intToStr & "/ --disable-http-cache"
-    if chromeFlags != @[""]:
-        for flag in chromeFlags:
-            chromeStuff = chromeStuff & " " & flag.strip
-    let command = findPath() & chromeStuff
-    if execCmd(command) != 0:
-        raise newException(CustomError,"could not open Chrome browser")
-
-# ----------------------------------------------------------------------
-
-
-
-# ---------------------------- SERVER LOGIC ----------------------------
-
 macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
-                    position: array[2, int] = [500,150], size: array[2, int] = [600,600],
-                        chromeFlags: seq[string] = @[""], appMode: bool = true) =
+                    position: array[2, int] = [500,150], size: array[2, int] = [600,600]) =
 
     quote do:
 
@@ -234,18 +169,16 @@ macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
             callProc(frontEndData.parseJson)
 
         proc detectShutdown =
-            sleep(1200) #add this as optional param in startApp, for js/css heavy apps as the time requirement will vary
+            sleep(1200) #time requirement may vary?
             if not openSockets:
                 quit()
 
-        if not `appMode`:
-            spawn openDefaultBrowser("http://localhost:" & $`portNo` & "/")
-        else:
-            spawn openChrome(portNo=`portNo`, chromeFlags=`chromeFlags`)
+        when defined(chrome):
+            spawn openChrome(portNo=`portNo`)
 
         router theRouter:
             get "/":
-                resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / `startURL`))#is this most efficient?
+                resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / `startURL`))#is this most efficient?
             get "/neel.js":
                 resp(Http200, NOCACHE_HEADER,"window.moveTo(" & $`position`[0] & "," & $`position`[1] & ")\n" &
                         "window.resizeTo(" & $`size`[0] & "," & $`size`[1] & ")\n" &
@@ -294,8 +227,8 @@ macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
                     spawn detectShutdown()
 
             get "/@path":
-                try:
-                    resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / path(request)))
+                try: # currentSourcePath.parentDir() over currentDir()
+                    resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / path(request)))
                 except:
                     raise newException(CustomError, "path: " & path(request) & " doesn't exist") #is this proper?
 
@@ -303,27 +236,27 @@ macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
             # ***review later for better implementation & reduce code duplication***
             get "/@path/@path2":
                 try:
-                    resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / path(request)))
+                    resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / path(request)))
                 except:
                     raise newException(CustomError, path(request) & " doesn't exist")
             get "/@path/@path2/@path3":
                 try:
-                    resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / path(request)))
+                    resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / path(request)))
                 except:
                     raise newException(CustomError, path(request) & " doesn't exist")
             get "/@path/@path2/@path3/@path4":
                 try:
-                    resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / path(request)))
+                    resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / path(request)))
                 except:
                     raise newException(CustomError, path(request) & " doesn't exist")
             get "/@path/@path2/@path3/@path4/@path5":
                 try:
-                    resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / path(request)))
+                    resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / path(request)))
                 except:
                     raise newException(CustomError, path(request) & " doesn't exist")
             get "/@path/@path2/@path3/@path4/@path5/@path6":
                 try:
-                    resp(Http200,NOCACHE_HEADER,readFile(getCurrentDir() / `assetsDir` / path(request)))
+                    resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / path(request)))
                 except:
                     raise newException(CustomError, path(request) & " doesn't exist")
 
@@ -332,4 +265,9 @@ macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
             var jester = initJester(theRouter, settings=settings)
             jester.serve
 
-        main()
+        when defined(webview):
+            spawn main()
+            sleep 500 #temporary placeholder until better implementation for potential time delay issue
+            openWebView(url="http://localhost:" & $`portNo` & "/")
+        else:
+            main()
