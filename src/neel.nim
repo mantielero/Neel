@@ -272,6 +272,6 @@ macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
         when defined(webview):
             spawn main()
             sleep 500 #temporary placeholder until better implementation for potential time delay issue
-            openWebView(url="http://localhost:" & $`portNo` & "/")
+            openWebView(url="http://localhost:" & $`portNo` & "/", width=`size[0]`, height=`size[1]`)
         else:
             main()
