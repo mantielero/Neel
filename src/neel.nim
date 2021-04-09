@@ -184,39 +184,49 @@ macro startApp*(startURL, assetsDir: string, portNo: int = 5000,
             get "/":
                 resp(Http200,NOCACHE_HEADER,readFile(currentSourcePath.parentDir() / `assetsDir` / `startURL`))#is this most efficient?
             get "/neel.js":
-                resp(Http200, NOCACHE_HEADER,"window.moveTo(" & $`position`[0] & "," & $`position`[1] & ")\n" &
-                        "window.resizeTo(" & $`size`[0] & "," & $`size`[1] & ")\n" &
-                        "var ws = new WebSocket(\"ws://localhost:" & $`portNo` & "/ws\")\n" &
-                        """var connected = false
-                        ws.onmessage = (data) => {
-                            try {
-                                let x = JSON.parse(data.data)
-                                let v = Object.values(x)
-                                neel.callJs(v[0], v[1])
-                            } catch (err) {
-                                let x = JSON.parse(data)
-                                let v = Object.values(x)
-                                neel.callJs(v[0], v[1])
-                            }
-                        }
-                        var neel = {
-                            callJs: function (func, arr) {
-                                window[func].apply(null, arr);
-                            },
-                            callProc: function (func, ...args) {
-                                if (!connected) {
-                                    function check(func, ...args) { if (ws.readyState == 1) { connected = true; neel.callProc(func, ...args); clearInterval(myInterval); } }
-                                    var myInterval = setInterval(check,15,func,...args)
-                                } else {
-                                    let paramArray = []
-                                    for (var i = 0; i < args.length; i++) {
-                                        paramArray.push(args[i])
-                                    }
-                                    let data = JSON.stringify({ "procName": func, "params": paramArray })
-                                    ws.send(data)
-                                }
-                            }
-                        }""")
+                resp(Http200, NOCACHE_HEADER,"window.moveTo(" & $`position`[0] & "," & $`position`[1] & ");\n" &
+                        "window.resizeTo(" & $`size`[0] & "," & $`size`[1] & ");\n" &
+                        "var ws = new WebSocket(\"ws://localhost:" & $`portNo` & "/ws\");\n" &
+                        """var connected = false;
+ws.onmessage = function (data) {
+    if (data.data !== undefined) {
+        var x = JSON.parse(data.data);
+        var v = [];
+        for (var key in x) {
+            v.push(x[key])
+        }
+
+        neel.callJs(v[0], v[1]);
+    } else {
+        var x = JSON.parse(data);
+        var v = [];
+        for (var key in x) {
+            v.push(x[key])
+        }
+        neel.callJs(v[0], v[1]);
+    }
+}
+var neel = {
+    callJs: function (func, arr) {
+        window[func].apply(null, arr);
+    },
+    callProc: function (func, arr) {
+        if (!connected) {
+            function check(func, arr) {
+                if (ws.readyState == 1) {
+                    connected = true;
+                    neel.callProc(func, arr);
+                    clearInterval(myInterval);
+                }
+            }
+            var myInterval = setInterval(check, 15, func, arr);
+        } else {
+            var data = JSON.stringify({ "procName": func, "params": arr });
+            console.log(data);
+            ws.send(data);
+        }
+    }
+}""")
 
             get "/ws":
                 try:
