@@ -1,6 +1,10 @@
 import macros, jester, os, strutils, ws, ws/jester_extra, osproc, json, threadpool, asyncdispatch
 export jester, os, strutils, ws, osproc, json, threadpool, asyncdispatch
 
+when not defined(webview) and not defined(chrome):
+    echo "app mode not defined. compile with -d:chrome or -d:webview"
+    quit()
+
 when defined(webview):
     include "neel/webview"
 
